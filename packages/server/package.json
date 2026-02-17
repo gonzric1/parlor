@@ -1,0 +1,27 @@
+{
+  "name": "@parlor/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@parlor/shared": "workspace:*",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "phe": "^0.6.0",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "socket.io-client": "^4.8.3",
+    "tsx": "^4.19.2",
+    "vitest": "^3.0.5"
+  }
+}
