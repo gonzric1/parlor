@@ -42,7 +42,7 @@ export function useRoom() {
 
   const joinRoom = useCallback(
     (roomCode: string, name: string, reconnectToken?: string, persistentId?: string) =>
-      new Promise<{ success: boolean; playerId?: string; reconnectToken?: string; error?: string }>(
+      new Promise<{ success: boolean; playerId?: string; reconnectToken?: string; gameId?: string; error?: string }>(
         (resolve) => {
           socket.emit(
             'room:join',
@@ -53,6 +53,7 @@ export function useRoom() {
                   success: true,
                   playerId: response.playerId,
                   reconnectToken: response.reconnectToken,
+                  gameId: response.gameId,
                 });
               } else {
                 resolve({ success: false, error: response.error });
