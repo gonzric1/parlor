@@ -1,9 +1,13 @@
 import { evaluateCards, rankDescription, handRank } from 'phe';
-import type { Card, Rank, Suit, PokerState, Pot } from './state.js';
+import type { Card, Rank, Suit, PokerState, PokerPlayer, Pot } from './state.js';
 import type { PlayerId } from '@parlor/shared';
 
 const RANKS: Rank[] = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'];
 const SUITS: Suit[] = ['h', 'd', 'c', 's'];
+
+export function isEligibleForHand(player: PokerPlayer): boolean {
+  return !player.sittingOut && !player.waitingForBB && player.chips > 0;
+}
 
 export function createDeck(): Card[] {
   const deck: Card[] = [];
@@ -23,7 +27,7 @@ export function createDeck(): Card[] {
 export function dealHoleCards(state: PokerState): PokerState {
   const newState = structuredClone(state);
   for (const player of newState.players) {
-    if (player.chips > 0 || player.allIn) {
+    if ((player.chips > 0 || player.allIn) && !player.sittingOut && !player.waitingForBB) {
       const card1 = newState.deck.pop()!;
       const card2 = newState.deck.pop()!;
       player.holeCards = [card1, card2];
@@ -224,7 +228,7 @@ export function rotateDealerButton(state: PokerState): PokerState {
   const n = newState.players.length;
   let idx = (newState.dealerIndex + 1) % n;
   for (let i = 0; i < n; i++) {
-    if (newState.players[idx].chips > 0) {
+    if (isEligibleForHand(newState.players[idx])) {
       newState.dealerIndex = idx;
       break;
     }
@@ -233,20 +237,48 @@ export function rotateDealerButton(state: PokerState): PokerState {
   return newState;
 }
 
+/** Find next eligible player index starting from (after) startIdx */
+function nextEligible(state: PokerState, startIdx: number): number {
+  const n = state.players.length;
+  let idx = (startIdx + 1) % n;
+  for (let i = 0; i < n; i++) {
+    if (isEligibleForHand(state.players[idx])) return idx;
+    idx = (idx + 1) % n;
+  }
+  return startIdx; // fallback
+}
+
 export function postBlinds(state: PokerState): PokerState {
   const newState = structuredClone(state);
+  const eligible = newState.players.filter(p => isEligibleForHand(p));
   const n = newState.players.length;
 
   let sbIndex: number;
   let bbIndex: number;
 
-  if (n === 2) {
+  if (eligible.length === 2) {
     // Heads-up: dealer is small blind
     sbIndex = newState.dealerIndex;
-    bbIndex = (newState.dealerIndex + 1) % n;
+    bbIndex = nextEligible(newState, sbIndex);
   } else {
-    sbIndex = (newState.dealerIndex + 1) % n;
-    bbIndex = (newState.dealerIndex + 2) % n;
+    sbIndex = nextEligible(newState, newState.dealerIndex);
+    bbIndex = nextEligible(newState, sbIndex);
+  }
+
+  // Collect posted missed blinds as dead money before normal blinds
+  let deadMoney = 0;
+  for (const player of newState.players) {
+    if (player.postingBlinds) {
+      const missedAmount = player.missedBlinds >= 2
+        ? newState.smallBlind + newState.bigBlind
+        : newState.bigBlind;
+      const actualPost = Math.min(missedAmount, player.chips);
+      player.chips -= actualPost;
+      deadMoney += actualPost;
+      player.postingBlinds = false;
+      player.missedBlinds = 0;
+      if (player.chips === 0) player.allIn = true;
+    }
   }
 
   // Post small blind
@@ -265,16 +297,24 @@ export function postBlinds(state: PokerState): PokerState {
   bbPlayer.totalBet = bbAmount;
   if (bbPlayer.chips === 0) bbPlayer.allIn = true;
 
+  // Add dead money to initial pot
+  if (deadMoney > 0) {
+    newState.pots = [{ amount: deadMoney, eligible: eligible.map(p => p.id) }];
+  }
+
+  // Check if waitingForBB player is at BB position — clear and deal them in
+  // (They're already eligible since we cleared waitingForBB in startNewHand when BB reaches them)
+
   // Set active player (UTG in multi-way, SB in heads-up after dealing)
-  if (n === 2) {
+  if (eligible.length === 2) {
     // Pre-flop heads-up: SB (dealer) acts first
     newState.activePlayerIndex = sbIndex;
   } else {
     newState.activePlayerIndex = (bbIndex + 1) % n;
-    // Skip to first non-folded non-all-in player
+    // Skip to first eligible non-folded non-all-in player
     for (let i = 0; i < n; i++) {
       const p = newState.players[newState.activePlayerIndex];
-      if (!p.folded && !p.allIn && p.chips > 0) break;
+      if (!p.folded && !p.allIn && p.chips > 0 && isEligibleForHand(p)) break;
       newState.activePlayerIndex = (newState.activePlayerIndex + 1) % n;
     }
   }
@@ -289,20 +329,51 @@ export function postBlinds(state: PokerState): PokerState {
 export function startNewHand(state: PokerState): PokerState {
   let newState = structuredClone(state);
 
-  // Remove eliminated players (0 chips)
-  // Actually keep them but skip them — they're out
+  // Determine where BB will be this hand (after rotation) to check waitingForBB players
+  // We do this before reset so we can figure out BB position
+  const tempState = rotateDealerButton(structuredClone(newState));
+  const eligible = tempState.players.filter(p => isEligibleForHand(p));
+  let bbIdx: number;
+  if (eligible.length === 2) {
+    bbIdx = nextEligible(tempState, tempState.dealerIndex);
+  } else if (eligible.length > 2) {
+    const sbIdx = nextEligible(tempState, tempState.dealerIndex);
+    bbIdx = nextEligible(tempState, sbIdx);
+  } else {
+    bbIdx = -1;
+  }
+
+  // Clear waitingForBB for players at the BB position
+  if (bbIdx >= 0) {
+    const bbPlayer = newState.players[bbIdx];
+    if (bbPlayer.waitingForBB) {
+      bbPlayer.waitingForBB = false;
+      bbPlayer.missedBlinds = 0;
+    }
+  }
+
+  // Track missed blinds for sitting-out players — increment when BB passes them
+  // (simplified: increment each hand they sit out)
+  for (const player of newState.players) {
+    if (player.sittingOut || player.waitingForBB) {
+      player.missedBlinds = Math.min(player.missedBlinds + 1, 2);
+    }
+  }
+
   // Reset per-hand player state
   for (const player of newState.players) {
     player.bet = 0;
     player.totalBet = 0;
-    player.folded = player.chips === 0; // auto-fold eliminated players
+    // Auto-fold: no chips, sitting out, or waiting for BB
+    player.folded = !isEligibleForHand(player);
     player.allIn = false;
     player.holeCards = null;
-    player.disconnected = player.disconnected; // preserve
+    player.lastAction = null;
   }
 
   newState.communityCards = [];
   newState.pots = [];
+  newState.mucked = false;
   newState.lastAggressor = null;
   newState.playersActedThisRound = [];
   newState.handNumber += 1;
@@ -323,11 +394,13 @@ export function startNewHand(state: PokerState): PokerState {
 }
 
 export function evaluateHandStrength(cards: string[]): number {
+  if (cards.length < 5) return Infinity; // Not enough cards to evaluate
   return evaluateCards(cards);
 }
 
 export function getHandDescription(cards: string[]): string {
+  if (cards.length < 5) return ''; // Not enough cards to evaluate (e.g. pre-flop fold)
   const strength = evaluateCards(cards);
   const rank = handRank(strength);
-  return rankDescription(rank);
+  return (rankDescription as unknown as string[])[rank];
 }

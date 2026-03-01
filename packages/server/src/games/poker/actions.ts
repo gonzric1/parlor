@@ -1,6 +1,6 @@
 import type { ActionResult, GameAction } from '@parlor/shared';
 import type { PokerState, PokerActionType } from './state.js';
-import { getNextActivePlayer, isRoundComplete, advancePhase, calculatePots } from './engine.js';
+import { getNextActivePlayer, isRoundComplete, advancePhase, calculatePots, isEligibleForHand } from './engine.js';
 
 interface PokerActionPayload {
   amount?: number;
@@ -12,17 +12,46 @@ export function validateAction(
 ): ActionResult {
   const playerIndex = state.players.findIndex(p => p.id === action.playerId);
   if (playerIndex === -1) return { valid: false, reason: 'Player not found' };
-  if (playerIndex !== state.activePlayerIndex) return { valid: false, reason: 'Not your turn' };
 
   const player = state.players[playerIndex];
+  const actionType = action.type as string;
+
+  // Actions that don't require it to be your turn
+  switch (actionType) {
+    case 'sit-out':
+      if (player.sittingOut) return { valid: false, reason: 'Already sitting out' };
+      return { valid: true };
+    case 'sit-in':
+      if (!player.sittingOut) return { valid: false, reason: 'Not sitting out' };
+      return { valid: true };
+    case 'post-blinds':
+      if (!player.sittingOut && player.missedBlinds === 0) return { valid: false, reason: 'No missed blinds to post' };
+      return { valid: true };
+    case 'wait-for-bb':
+      if (!player.sittingOut && player.missedBlinds === 0) return { valid: false, reason: 'No missed blinds' };
+      return { valid: true };
+    case 'top-up': {
+      const maxStack = Math.max(...state.players.map(p => p.chips));
+      if (player.chips >= maxStack) return { valid: false, reason: 'Already at max stack' };
+      return { valid: true };
+    }
+  }
+
+  // Standard in-turn actions
+  if (playerIndex !== state.activePlayerIndex) return { valid: false, reason: 'Not your turn' };
   if (player.folded) return { valid: false, reason: 'Already folded' };
   if (player.allIn) return { valid: false, reason: 'Already all-in' };
 
-  const actionType = action.type as PokerActionType;
+  // Reveal is only valid during winner-decide phase
+  if (actionType === 'reveal') {
+    if (state.phase !== 'winner-decide') return { valid: false, reason: 'Cannot reveal now' };
+    return { valid: true };
+  }
+
   const maxBet = Math.max(...state.players.filter(p => !p.folded).map(p => p.bet));
   const toCall = maxBet - player.bet;
 
-  switch (actionType) {
+  switch (actionType as PokerActionType) {
     case 'fold':
       return { valid: true };
     case 'check':
@@ -58,15 +87,54 @@ export function applyAction(
   let newState = structuredClone(state);
   const playerIndex = newState.players.findIndex(p => p.id === action.playerId);
   const player = newState.players[playerIndex];
-  const actionType = action.type as PokerActionType;
+  const actionType = action.type as string;
+
+  // Handle out-of-turn cash game actions
+  switch (actionType) {
+    case 'sit-out':
+      player.sittingOut = true;
+      return newState;
+    case 'sit-in':
+      if (player.missedBlinds > 0) {
+        // Player needs to choose: post or wait. Just mark sitting in for now.
+        // Client will show post/wait buttons.
+        return newState;
+      }
+      player.sittingOut = false;
+      return newState;
+    case 'post-blinds':
+      player.postingBlinds = true;
+      player.sittingOut = false;
+      player.waitingForBB = false;
+      return newState;
+    case 'wait-for-bb':
+      player.waitingForBB = true;
+      player.sittingOut = false;
+      return newState;
+    case 'top-up': {
+      const maxStack = Math.max(...newState.players.map(p => p.chips));
+      player.chips = maxStack;
+      return newState;
+    }
+  }
+
+  // Handle reveal action during winner-decide phase
+  if (actionType === 'reveal') {
+    newState.mucked = false;
+    newState.phase = 'showdown';
+    return newState;
+  }
+
   const maxBet = Math.max(...newState.players.filter(p => !p.folded).map(p => p.bet));
 
   switch (actionType) {
     case 'fold':
       player.folded = true;
+      player.lastAction = 'fold';
       break;
     case 'check':
       // No chip movement
+      player.lastAction = 'check';
       break;
     case 'call': {
       const toCall = Math.min(maxBet - player.bet, player.chips);
@@ -74,6 +142,7 @@ export function applyAction(
       player.bet += toCall;
       player.totalBet += toCall;
       if (player.chips === 0) player.allIn = true;
+      player.lastAction = 'call';
       break;
     }
     case 'raise': {
@@ -90,6 +159,8 @@ export function applyAction(
       newState.minRaise = raiseBy;
       newState.lastAggressor = playerIndex;
       if (player.chips === 0) player.allIn = true;
+      // "bet" if no one had bet yet, "raise" otherwise
+      player.lastAction = maxBet === 0 ? 'bet' : 'raise';
       // After a raise, all other players need to act again
       newState.playersActedThisRound = [player.id];
       break;
@@ -100,6 +171,7 @@ export function applyAction(
       player.totalBet += allInAmount;
       player.chips = 0;
       player.allIn = true;
+      player.lastAction = 'all-in';
       if (player.bet > maxBet) {
         const raiseBy = player.bet - maxBet;
         if (raiseBy >= newState.minRaise) {
@@ -126,7 +198,10 @@ export function applyAction(
       const winner = newState.players.find(p => p.id === nonFolded[0].id)!;
       winner.chips += pot.amount;
     }
-    newState.phase = 'showdown';
+    // Enter winner-decide phase so winner can choose to reveal or muck
+    newState.phase = 'winner-decide';
+    newState.activePlayerIndex = newState.players.findIndex(p => p.id === nonFolded[0].id);
+    newState.mucked = false;
     return newState;
   }
 

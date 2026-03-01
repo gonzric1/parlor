@@ -11,6 +11,10 @@ export interface PokerPlayer {
   folded: boolean;
   allIn: boolean;
   connected: boolean;
+  lastAction: string | null;
+  sittingOut: boolean;
+  missedBlinds: number;
+  waitingForBB: boolean;
 }
 
 export interface ShowdownResult {
@@ -26,6 +30,7 @@ export interface ShowdownResult {
 
 export interface PokerPublicState {
   phase: string;
+  handNumber: number;
   communityCards: CardData[];
   pot: number;
   roundBets: number;
@@ -35,6 +40,7 @@ export interface PokerPublicState {
   players: PokerPlayer[];
   minRaise: number;
   showdown: ShowdownResult | null;
+  mucked?: boolean;
 }
 
 export interface PokerPrivateState {

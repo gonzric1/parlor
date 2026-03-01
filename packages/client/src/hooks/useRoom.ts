@@ -26,6 +26,20 @@ export function useRoom() {
     [socket]
   );
 
+  const observeRoom = useCallback(
+    (roomCode: string) =>
+      new Promise<{ success: boolean; gameId?: string | null; error?: string }>((resolve) => {
+        socket.emit('room:observe', { roomCode }, (response) => {
+          if (response.success) {
+            resolve({ success: true, gameId: response.gameId });
+          } else {
+            resolve({ success: false, error: response.error });
+          }
+        });
+      }),
+    [socket]
+  );
+
   const joinRoom = useCallback(
     (roomCode: string, name: string, reconnectToken?: string) =>
       new Promise<{ success: boolean; playerId?: string; reconnectToken?: string; error?: string }>(
@@ -65,5 +79,5 @@ export function useRoom() {
     socket.emit('lobby:returnToLobby');
   }, [socket]);
 
-  return { lobby, error, createRoom, joinRoom, selectGame, startGame, returnToLobby };
+  return { lobby, error, createRoom, observeRoom, joinRoom, selectGame, startGame, returnToLobby };
 }

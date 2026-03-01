@@ -58,15 +58,30 @@ This runs `pnpm -r build`, which builds each package in dependency order:
 
 ## Test
 
+### Unit Tests
+
 ```bash
 pnpm test
 ```
 
 Runs `pnpm -r test` across all packages:
 
-- **Server**: `vitest run` -- unit and integration tests.
-- **Client**: No tests yet (`echo 'no tests yet'`).
-- **Root**: Playwright is available as a dev dependency for e2e tests.
+- **Server**: `vitest run` -- unit tests for game engine functions (`packages/server/src/games/poker/__tests__/`).
+- **Client**: No unit tests yet.
+
+### End-to-End Tests (Playwright)
+
+Playwright tests run against a **production build** on port 3000 (not the dev server):
+
+```bash
+pnpm build
+bash scripts/restart-server.sh
+npx playwright test tests/poker-animations.spec.ts
+```
+
+The `scripts/restart-server.sh` helper kills any existing server process and starts a fresh one from the production build.
+
+Playwright tests create isolated browser contexts for TV and player views, join a room, start a game, and verify animations, UI state, and game flow. See `tests/poker-animations.spec.ts` for test helpers like `createRoomAndJoin`, `findActivePlayer`, and `advanceUntilPhaseChanges`.
 
 ## Docker
 

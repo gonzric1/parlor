@@ -6,9 +6,22 @@ export type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 let socket: TypedSocket | null = null;
 
+// Module-level cache for game state. Listeners are attached to the socket at
+// creation time so events received during SPA navigation (between game:start
+// triggering a route change and GamePage mounting) are never lost.
+const gameStateCache = { publicState: null as unknown, privateState: null as unknown };
+
+export function getGameStateCache() {
+  return gameStateCache;
+}
+
 function getSocket(): TypedSocket {
   if (!socket) {
     socket = io({ autoConnect: false }) as TypedSocket;
+    // Eagerly cache game state so it's available even if useGameState
+    // hasn't mounted yet (e.g. during SPA navigation after game:start)
+    socket.on('game:publicState', (state: unknown) => { gameStateCache.publicState = state; });
+    socket.on('game:privateState', (state: unknown) => { gameStateCache.privateState = state; });
   }
   return socket;
 }

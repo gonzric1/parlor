@@ -58,4 +58,22 @@ export interface ServerGamePlugin<
   checkGameOver(state: TState): GameResult<TPlayerResult> | null;
   onPlayerDisconnect(state: TState, playerId: PlayerId): TState;
   onPlayerReconnect(state: TState, playerId: PlayerId): TState;
+
+  /** Called after each action. Return timer config if the platform should set a timer, or null. */
+  getPostActionTimer?(state: TState): { durationMs: number; phase: TPhase } | null;
+
+  /** Called when a round/hand ends but the game isn't over. Return the next round's initial state, or null if no auto-advance. */
+  startNextRound?(state: TState): TState | null;
+
+  /** Delay in ms before startNextRound is called (e.g., 5s to show results). Default 0. */
+  nextRoundDelay?: number;
+
+  /** Called when a player joins mid-game. Return updated state with the new player added. */
+  onPlayerJoin?(state: TState, playerId: PlayerId, playerName: string, settings: TSettings): TState;
+
+  /** Called when a player leaves mid-game. Return updated state with the player removed. */
+  onPlayerLeave?(state: TState, playerId: PlayerId): TState;
+
+  /** Return false if the player cannot leave right now (e.g., has live cards). */
+  canPlayerLeave?(state: TState, playerId: PlayerId): boolean;
 }

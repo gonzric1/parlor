@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRoom } from '../hooks/useRoom';
 import { useSocket } from '../hooks/useSocket';
@@ -15,6 +15,17 @@ const styles = {
     background: '#1a1a2e',
   },
   title: {
+    fontSize: '2.5rem',
+    fontWeight: 700,
+    marginBottom: '0.5rem',
+    color: '#eee',
+  },
+  subtitle: {
+    fontSize: '1rem',
+    color: '#888',
+    marginBottom: '2rem',
+  },
+  lobbyTitle: {
     fontSize: '2rem',
     fontWeight: 700,
     marginBottom: '1rem',
@@ -77,20 +88,68 @@ const styles = {
     opacity: 0.4,
     cursor: 'not-allowed',
   },
+  landingOptions: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '1.5rem',
+    width: '100%',
+    maxWidth: '400px',
+  },
+  optionButton: {
+    padding: '20px 24px',
+    fontSize: '1.2rem',
+    fontWeight: 700,
+    borderRadius: '12px',
+    border: 'none',
+    cursor: 'pointer',
+    textAlign: 'center' as const,
+  },
+  divider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1rem',
+    color: '#555',
+    fontSize: '0.9rem',
+  },
+  dividerLine: {
+    flex: 1,
+    height: '1px',
+    background: '#333',
+  },
+  input: {
+    padding: '14px 16px',
+    fontSize: '1.1rem',
+    borderRadius: '8px',
+    border: '2px solid #0f3460',
+    background: '#16213e',
+    color: '#eee',
+    outline: 'none',
+    textAlign: 'center' as const,
+    letterSpacing: '0.2em',
+    fontWeight: 700,
+    width: '100%',
+    boxSizing: 'border-box' as const,
+  },
+  error: {
+    color: '#e94560',
+    fontSize: '0.9rem',
+    textAlign: 'center' as const,
+    marginTop: '0.5rem',
+  },
 };
+
+type TVMode = 'landing' | 'creating' | 'lobby';
 
 export function TVLobby() {
   const navigate = useNavigate();
-  const { socket } = useSocket();
-  const { lobby, createRoom, selectGame, startGame } = useRoom();
+  const { socket, connected } = useSocket();
+  const { lobby, createRoom, observeRoom, selectGame, startGame } = useRoom();
+  const [mode, setMode] = useState<TVMode>('landing');
   const [roomCode, setRoomCode] = useState<string | null>(null);
+  const [observeCode, setObserveCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    createRoom().then((code) => {
-      setRoomCode(code);
-    });
-  }, [createRoom]);
-
+  // Navigate to game view when game starts
   useEffect(() => {
     const handler = (data: { gameId: string }) => {
       if (roomCode) {
@@ -103,14 +162,98 @@ export function TVLobby() {
     };
   }, [socket, roomCode, navigate]);
 
-  if (!roomCode) {
+  const handleCreateRoom = useCallback(async () => {
+    setMode('creating');
+    setError(null);
+    const code = await createRoom();
+    setRoomCode(code);
+    setMode('lobby');
+  }, [createRoom]);
+
+  const handleObserve = useCallback(async () => {
+    if (observeCode.length !== 4) return;
+    setError(null);
+    const result = await observeRoom(observeCode);
+    if (result.success) {
+      setRoomCode(observeCode);
+      if (result.gameId) {
+        // Game already in progress — go directly to game view
+        navigate(`/tv/${observeCode}`, { state: { gameId: result.gameId } });
+      } else {
+        // Still in lobby — show lobby view
+        setMode('lobby');
+      }
+    } else {
+      setError(result.error ?? 'Room not found');
+    }
+  }, [observeCode, observeRoom, navigate]);
+
+  // Landing screen
+  if (mode === 'landing') {
     return (
       <div style={styles.container}>
-        <div style={styles.title}>Creating room...</div>
+        <div style={styles.title}>Parlor</div>
+        <div style={styles.subtitle}>TV Display</div>
+        <div style={styles.landingOptions}>
+          <button
+            style={{
+              ...styles.optionButton,
+              background: '#e94560',
+              color: '#fff',
+              opacity: connected ? 1 : 0.4,
+            }}
+            disabled={!connected}
+            onClick={handleCreateRoom}
+          >
+            Create New Game
+          </button>
+
+          <div style={styles.divider}>
+            <div style={styles.dividerLine} />
+            <span>or</span>
+            <div style={styles.dividerLine} />
+          </div>
+
+          <div>
+            <input
+              style={styles.input}
+              placeholder="ROOM CODE"
+              value={observeCode}
+              maxLength={4}
+              onChange={(e) => setObserveCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))}
+              onKeyDown={(e) => e.key === 'Enter' && handleObserve()}
+            />
+            <button
+              style={{
+                ...styles.optionButton,
+                background: '#0f3460',
+                color: '#eee',
+                width: '100%',
+                marginTop: '0.75rem',
+                opacity: observeCode.length === 4 && connected ? 1 : 0.4,
+              }}
+              disabled={observeCode.length !== 4 || !connected}
+              onClick={handleObserve}
+            >
+              Watch Existing Game
+            </button>
+            {error && <div style={styles.error}>{error}</div>}
+          </div>
+        </div>
       </div>
     );
   }
 
+  // Creating room
+  if (mode === 'creating' || !roomCode) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.lobbyTitle}>Creating room...</div>
+      </div>
+    );
+  }
+
+  // Lobby view
   const joinUrl = `${window.location.origin}/?room=${roomCode}`;
   const players = lobby?.players ?? [];
   const selectedGameId = lobby?.selectedGameId ?? null;
@@ -120,7 +263,7 @@ export function TVLobby() {
 
   return (
     <div style={styles.container}>
-      <div style={styles.title}>Join at</div>
+      <div style={styles.lobbyTitle}>Join at</div>
       <div style={styles.roomCode}>{roomCode}</div>
       <QRCode value={joinUrl} size={180} />
       <div style={{ marginTop: '2rem', ...styles.content }}>

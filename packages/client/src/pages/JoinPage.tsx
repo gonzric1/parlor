@@ -74,10 +74,11 @@ export function JoinPage() {
     if (!roomCode || !name) return;
     setJoining(true);
     setError(null);
-    const token = sessionStorage.getItem('reconnectToken') ?? undefined;
+    const tokenKey = `reconnectToken:${roomCode}`;
+    const token = sessionStorage.getItem(tokenKey) ?? undefined;
     const result = await joinRoom(roomCode, name, token);
     if (result.success && result.reconnectToken) {
-      sessionStorage.setItem('reconnectToken', result.reconnectToken);
+      sessionStorage.setItem(tokenKey, result.reconnectToken);
       navigate(`/play/${roomCode}`);
     } else {
       setError(result.error ?? 'Failed to join room');

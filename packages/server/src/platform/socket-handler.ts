@@ -16,6 +16,11 @@ export function setupSocketHandler(io: TypedServer): void {
       callback({ roomCode });
     });
 
+    socket.on('room:observe', (data, callback) => {
+      const result = roomManager.observeRoom(data.roomCode, socket);
+      callback(result);
+    });
+
     socket.on('room:join', (data, callback) => {
       console.log(`[room:join] code=${data.roomCode} name=${data.playerName} socketId=${socket.id}`);
       const result = roomManager.joinRoom(data.roomCode, data.playerName, socket, data.reconnectToken);

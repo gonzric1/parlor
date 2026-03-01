@@ -19,6 +19,7 @@ interface RoomState {
   gamePlugin: ServerGamePlugin | null;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   hostTransferTimer: ReturnType<typeof setTimeout> | null;
+  gameTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const rooms = new Map<RoomCode, RoomState>();
@@ -56,6 +57,7 @@ export function createRoom(tvSocketId?: string): RoomCode {
     gamePlugin: null,
     cleanupTimer: null,
     hostTransferTimer: null,
+    gameTimer: null,
   };
   rooms.set(code, roomState);
   if (tvSocketId) {
@@ -109,12 +111,38 @@ export function joinRoom(
   }
 
   // New join
-  if (state.room.phase === 'playing') {
-    return { success: false, error: 'Game already in progress' };
-  }
-
   const playerId = generateId();
   const token = crypto.randomUUID() as ReconnectToken;
+
+  // Allow joining during playing phase if plugin supports it
+  if (state.room.phase === 'playing') {
+    if (!state.gamePlugin || !('onPlayerJoin' in state.gamePlugin) || !state.gamePlugin.onPlayerJoin) {
+      return { success: false, error: 'Game already in progress' };
+    }
+
+    const player: Player = {
+      id: playerId,
+      name: playerName,
+      connected: true,
+      isHost: false,
+    };
+
+    state.room.players.push(player);
+    socketToPlayer.set(socket.id, { roomCode, playerId });
+    reconnectTokens.set(token, { roomCode, playerId });
+    socket.join(roomCode);
+
+    // Add player to game state
+    state.gameState = state.gamePlugin.onPlayerJoin(
+      state.gameState, playerId, playerName, state.room.gameSettings as any,
+    );
+
+    io.to(roomCode).emit('game:start', { gameId: state.gamePlugin.meta.id });
+    distributeGameState(state);
+    broadcastLobby(state);
+    return { success: true, playerId, reconnectToken: token };
+  }
+
   const isFirst = state.room.players.length === 0;
 
   const player: Player = {
@@ -147,6 +175,27 @@ export function leaveRoom(socketId: string): void {
   const state = rooms.get(mapping.roomCode);
   if (!state) return;
 
+  // During playing phase, check if player can leave
+  if (state.room.phase === 'playing' && state.gamePlugin && state.gameState) {
+    const canLeave = state.gamePlugin.canPlayerLeave?.(state.gameState, mapping.playerId) ?? true;
+    if (!canLeave) {
+      // Emit error to the leaving player
+      for (const [sid, m] of socketToPlayer) {
+        if (m.playerId === mapping.playerId && m.roomCode === mapping.roomCode) {
+          io.sockets.sockets.get(sid)?.emit('room:error', { message: 'Cannot leave while in a hand' });
+          break;
+        }
+      }
+      return;
+    }
+
+    // Remove player from game state
+    if (state.gamePlugin.onPlayerLeave) {
+      state.gameState = state.gamePlugin.onPlayerLeave(state.gameState, mapping.playerId);
+      distributeGameState(state);
+    }
+  }
+
   socketToPlayer.delete(socketId);
 
   // Remove player from room
@@ -168,6 +217,20 @@ export function leaveRoom(socketId: string): void {
   }
 
   if (state.room.players.length === 0) {
+    // Check if game is over (all players left)
+    if (state.room.phase === 'playing' && state.gamePlugin && state.gameState) {
+      const gameResult = state.gamePlugin.checkGameOver(state.gameState);
+      if (gameResult) {
+        io.to(mapping.roomCode).emit('game:over', {
+          winners: gameResult.winners,
+          playerResults: {},
+          summary: gameResult.summary,
+        });
+        state.room.phase = 'waiting' as any;
+        state.gameState = null;
+        state.gamePlugin = null;
+      }
+    }
     startCleanupTimer(mapping.roomCode);
   }
 
@@ -277,38 +340,67 @@ export function handleGameAction(roomCode: RoomCode, playerId: PlayerId, action:
   state.gameState = state.gamePlugin.applyAction(state.gameState, fullAction);
   distributeGameState(state);
 
-  // Check if hand reached showdown
-  const phase = state.gamePlugin.getPhase(state.gameState);
-  if (phase === 'showdown') {
-    // Check if the entire game is over (one player left with chips)
-    const gameResult = state.gamePlugin.checkGameOver(state.gameState);
-    if (gameResult) {
-      const playerResults: Record<string, unknown> = {};
-      gameResult.playerResults.forEach((val, key) => { playerResults[key] = val; });
-      io.to(roomCode).emit('game:over', {
-        winners: gameResult.winners,
-        playerResults,
-        summary: gameResult.summary,
-      });
-      state.room = lobby.returnToLobby(state.room);
-      state.gameState = null;
-      state.gamePlugin = null;
-      broadcastLobby(state);
-    } else {
-      // Hand is over but game continues — start new hand after delay
-      setTimeout(() => {
-        const currentState = rooms.get(roomCode);
-        if (!currentState || !currentState.gamePlugin || !currentState.gameState) return;
-        if (currentState.gamePlugin.getPhase(currentState.gameState) !== 'showdown') return;
+  // Check for plugin-requested timer after action
+  const timerConfig = state.gamePlugin.getPostActionTimer?.(state.gameState);
+  if (timerConfig) {
+    if (state.gameTimer) clearTimeout(state.gameTimer);
+    state.gameTimer = setTimeout(() => {
+      const currentState = rooms.get(roomCode);
+      if (!currentState || !currentState.gamePlugin || !currentState.gameState) return;
+      if (currentState.gamePlugin.getPhase(currentState.gameState) !== timerConfig.phase) return;
 
-        // Import startNewHand dynamically to avoid circular deps
-        import('../games/poker/engine.js').then(({ startNewHand }) => {
-          currentState.gameState = startNewHand(currentState.gameState as any);
-          distributeGameState(currentState);
-        });
-      }, 5000); // 5 second delay so players can see the showdown results
+      currentState.gameState = currentState.gamePlugin.onTimeout(currentState.gameState);
+      distributeGameState(currentState);
+      handleRoundEnd(roomCode, currentState);
+    }, timerConfig.durationMs);
+  } else {
+    // Clear any existing timer if no timer requested
+    if (state.gameTimer) {
+      clearTimeout(state.gameTimer);
+      state.gameTimer = null;
     }
+    handleRoundEnd(roomCode, state);
   }
+}
+
+function handleRoundEnd(roomCode: RoomCode, state: RoomState): void {
+  if (!state.gamePlugin || !state.gameState) return;
+
+  // Check if the entire game is over
+  const gameResult = state.gamePlugin.checkGameOver(state.gameState);
+  if (gameResult) {
+    const playerResults: Record<string, unknown> = {};
+    gameResult.playerResults.forEach((val, key) => { playerResults[key] = val; });
+    io.to(roomCode).emit('game:over', {
+      winners: gameResult.winners,
+      playerResults,
+      summary: gameResult.summary,
+    });
+    state.room = lobby.returnToLobby(state.room);
+    state.gameState = null;
+    state.gamePlugin = null;
+    broadcastLobby(state);
+    return;
+  }
+
+  // If plugin supports round continuation, start next round after delay
+  if (!state.gamePlugin.startNextRound) return;
+
+  const delay = state.gamePlugin.nextRoundDelay ?? 0;
+  const currentPhase = state.gamePlugin.getPhase(state.gameState);
+
+  setTimeout(() => {
+    const currentState = rooms.get(roomCode);
+    if (!currentState || !currentState.gamePlugin || !currentState.gameState) return;
+    if (currentState.gamePlugin.getPhase(currentState.gameState) !== currentPhase) return;
+
+    const nextState = currentState.gamePlugin.startNextRound?.(currentState.gameState);
+    if (nextState) {
+      currentState.gameState = nextState;
+      io.to(roomCode).emit('game:roundStart', { roundNumber: (nextState as any).handNumber ?? 0 });
+      distributeGameState(currentState);
+    }
+  }, delay);
 }
 
 export function returnToLobby(roomCode: RoomCode, playerId: PlayerId): void {
@@ -387,6 +479,30 @@ export function getPlayerMapping(socketId: string): { roomCode: RoomCode; player
     }
   }
   return undefined;
+}
+
+export function observeRoom(
+  roomCode: RoomCode,
+  socket: TypedSocket,
+): { success: true; gameId: string | null } | { success: false; error: string } {
+  const state = rooms.get(roomCode);
+  if (!state) return { success: false, error: 'Room not found' };
+
+  // Join the socket room so the TV receives broadcasts
+  socket.join(roomCode);
+  socketToRoom.set(socket.id, roomCode);
+
+  // Send current lobby state
+  broadcastLobby(state);
+
+  // If a game is in progress, send the current game state
+  if (state.gamePlugin && state.gameState) {
+    const views = state.gamePlugin.getStateViews(state.gameState);
+    socket.emit('game:publicState', views.publicState);
+    return { success: true, gameId: state.gamePlugin.meta.id };
+  }
+
+  return { success: true, gameId: state.room.selectedGameId };
 }
 
 export function sendLobbyUpdate(roomCode: RoomCode): void {

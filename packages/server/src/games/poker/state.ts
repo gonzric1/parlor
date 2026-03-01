@@ -8,9 +8,9 @@ export interface Card {
   suit: Suit;
 }
 
-export type PokerPhase = 'dealing' | 'pre-flop' | 'flop' | 'turn' | 'river' | 'showdown';
+export type PokerPhase = 'dealing' | 'pre-flop' | 'flop' | 'turn' | 'river' | 'winner-decide' | 'showdown';
 
-export type PokerActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in';
+export type PokerActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in' | 'reveal';
 
 export interface PokerPlayer {
   id: PlayerId;
@@ -22,6 +22,11 @@ export interface PokerPlayer {
   allIn: boolean;
   holeCards: [Card, Card] | null;
   disconnected: boolean;
+  lastAction: PokerActionType | 'bet' | null;
+  sittingOut: boolean;
+  missedBlinds: number;
+  waitingForBB: boolean;
+  postingBlinds: boolean;
 }
 
 export interface Pot {
@@ -44,6 +49,8 @@ export interface PokerState {
   handNumber: number;
   lastAggressor: number | null;
   playersActedThisRound: string[];
+  mucked: boolean;
+  minBuyIn: number;
 }
 
 export interface PokerPublicState {
@@ -57,6 +64,9 @@ export interface PokerPublicState {
     isDealer: boolean;
     isActive: boolean;
     disconnected: boolean;
+    sittingOut: boolean;
+    missedBlinds: number;
+    waitingForBB: boolean;
   }[];
   communityCards: Card[];
   pots: Pot[];

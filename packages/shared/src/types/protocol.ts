@@ -17,6 +17,14 @@ export interface ClientToServerEvents {
 
   'room:leave': () => void;
 
+  'room:observe': (
+    data: { roomCode: RoomCode },
+    callback: (response:
+      | { success: true; gameId: GameId | null }
+      | { success: false; error: string }
+    ) => void
+  ) => void;
+
   'lobby:selectGame': (data: { gameId: GameId }) => void;
   'lobby:updateSettings': (data: { settings: Record<string, unknown> }) => void;
   'lobby:startGame': () => void;
@@ -32,6 +40,7 @@ export interface ServerToClientEvents {
   'game:publicState': (state: unknown) => void;
   'game:privateState': (state: unknown) => void;
   'game:over': (result: { winners: string[]; playerResults: Record<string, unknown>; summary: string }) => void;
+  'game:roundStart': (data: { roundNumber: number }) => void;
   'room:playerConnectionChange': (data: { playerId: PlayerId; connected: boolean }) => void;
   'room:error': (data: { message: string }) => void;
 }

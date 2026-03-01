@@ -55,3 +55,27 @@ This document records key architectural decisions and their rationale.
 **Decision**: After every action (including timeouts and disconnect/reconnect events), the server calls `getStateViews()` and emits `game:publicState` to all sockets in the room plus `game:privateState` to each individual player socket.
 
 **Rationale**: This ensures the TV and all players always have fresh, consistent state. The alternative -- sending incremental diffs -- would require tracking what each client has seen and building a diffing mechanism. Full state distribution is simpler and more reliable, especially given the small state sizes in card games. If a player reconnects mid-game, they automatically get the full current state on the next distribution cycle.
+
+## Inline JS Styles (No CSS)
+
+**Decision**: All client styling uses inline JavaScript style objects. No CSS files, CSS modules, or utility frameworks (Tailwind, etc.).
+
+**Rationale**: Keeps each component self-contained with no external style dependencies. Colocating styles with components makes it easy to find and modify visual properties. For a project of this size, the trade-offs of inline styles (no pseudo-selectors, no media queries via CSS) are acceptable because responsive sizing is handled via `clamp()`, viewport units, and `ResizeObserver`-based scaling in JS.
+
+## TV Scale-to-Fit
+
+**Decision**: The TV game area is designed at a fixed reference size (960x620px) and scaled to fill the viewport using `transform: scale()`.
+
+**Rationale**: The poker table has complex absolute positioning for 8 player seats around an ellipse. Making every offset responsive with viewport units would be fragile and hard to maintain. Instead, the layout is designed once at a known size, then the entire subtree is uniformly scaled to fit. A `ResizeObserver` hook recalculates the scale factor on window resize. This approach preserves all relative proportions perfectly and works on any screen size from laptops to large TVs.
+
+## Muck or Reveal (Winner-Decide Phase)
+
+**Decision**: When all opponents fold, the winner gets 5 seconds to reveal their cards. Cards are mucked (hidden) by default if the timer expires.
+
+**Rationale**: In real poker, the winner of an uncontested pot is never forced to show their cards. This is a core strategic element -- showing gives opponents information for free, while mucking preserves mystery. The `winner-decide` phase is a lightweight intermediate state between the last fold and `showdown`, using the existing plugin timer system. The 5-second window is short enough to keep the game moving while giving the winner a meaningful choice.
+
+## Per-Player Last Action Tracking
+
+**Decision**: Each player's `lastAction` field records their most recent action (`'fold'`, `'check'`, `'call'`, `'raise'`, `'bet'`, `'all-in'`). A `'raise'` when `maxBet === 0` is recorded as `'bet'`.
+
+**Rationale**: The TV view shows a bet badge above each player's seat (e.g. "call 20", "raise 80"). Without tracking the action type, the UI could only show a raw number. The `'bet'` vs `'raise'` distinction follows standard poker terminology: the first wager in a round is a "bet", subsequent increases are "raises".

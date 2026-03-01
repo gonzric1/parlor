@@ -1,17 +1,28 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSocket } from './useSocket';
+import { getGameStateCache } from './useSocket';
 
 export function useGameState() {
   const { socket } = useSocket();
-  const [publicState, setPublicState] = useState<unknown>(null);
-  const [privateState, setPrivateState] = useState<unknown>(null);
+  const cache = getGameStateCache();
+  const [publicState, setPublicState] = useState<unknown>(cache.publicState);
+  const [privateState, setPrivateState] = useState<unknown>(cache.privateState);
 
   useEffect(() => {
-    socket.on('game:publicState', setPublicState);
-    socket.on('game:privateState', setPrivateState);
+    const onPublic = (state: unknown) => setPublicState(state);
+    const onPrivate = (state: unknown) => setPrivateState(state);
+
+    socket.on('game:publicState', onPublic);
+    socket.on('game:privateState', onPrivate);
+
+    // Sync from cache in case state arrived before this component mounted
+    const c = getGameStateCache();
+    if (c.publicState !== null) setPublicState(c.publicState);
+    if (c.privateState !== null) setPrivateState(c.privateState);
+
     return () => {
-      socket.off('game:publicState', setPublicState);
-      socket.off('game:privateState', setPrivateState);
+      socket.off('game:publicState', onPublic);
+      socket.off('game:privateState', onPrivate);
     };
   }, [socket]);
 

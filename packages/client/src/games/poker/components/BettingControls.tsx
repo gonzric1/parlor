@@ -13,20 +13,20 @@ const styles = {
   container: {
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: '10px',
+    gap: 'min(10px, 2vh)',
     width: '100%',
   },
   buttonRow: {
     display: 'flex',
-    gap: '8px',
+    gap: 'min(8px, 2vw)',
   },
   button: {
     flex: 1,
-    padding: '12px 8px',
+    padding: 'clamp(10px, 2.5vh, 16px) clamp(4px, 1vw, 8px)',
     borderRadius: '8px',
     border: 'none',
     fontWeight: 700,
-    fontSize: '0.9rem',
+    fontSize: 'clamp(0.75rem, 2.5vw, 1rem)',
     cursor: 'pointer',
     color: '#eee',
   },
@@ -48,22 +48,23 @@ const styles = {
   },
   raiseRow: {
     display: 'flex',
-    gap: '8px',
+    gap: 'min(8px, 2vw)',
     alignItems: 'center',
   },
   slider: {
     flex: 1,
     accentColor: '#e94560',
+    height: '32px',
   },
   raiseInput: {
-    width: '70px',
-    padding: '8px',
+    width: 'clamp(60px, 16vw, 80px)',
+    padding: 'clamp(6px, 1.5vh, 10px)',
     borderRadius: '6px',
     border: '1px solid #0f3460',
     background: '#16213e',
     color: '#eee',
     textAlign: 'center' as const,
-    fontSize: '0.9rem',
+    fontSize: 'clamp(0.8rem, 2.5vw, 1rem)',
   },
   notYourTurn: {
     textAlign: 'center' as const,
@@ -94,10 +95,6 @@ export function BettingControls({
   useEffect(() => {
     setRaiseAmount(effectiveMin);
   }, [effectiveMin]);
-
-  if (!isMyTurn) {
-    return <div style={styles.notYourTurn}>Waiting for your turn...</div>;
-  }
 
   return (
     <div style={styles.container}>
