@@ -28,7 +28,7 @@ export const pokerPlugin: ServerGamePlugin<
     id: 'poker',
     name: "Texas Hold'em",
     description: 'Classic poker game with community cards. Try to make the best 5-card hand.',
-    minPlayers: 2,
+    minPlayers: 1,
     maxPlayers: 8,
   },
 
@@ -95,9 +95,18 @@ export const pokerPlugin: ServerGamePlugin<
       minBuyIn,
     };
 
-    state = engine.postBlinds(state);
-    state = engine.dealHoleCards(state);
-    state.phase = 'pre-flop';
+    // Need at least 2 players to deal a hand
+    if (players.length >= 2) {
+      state = engine.postBlinds(state);
+      state = engine.dealHoleCards(state);
+      state.phase = 'pre-flop';
+    } else {
+      // Single player: wait in showdown phase for more players to join
+      state.phase = 'showdown';
+      for (const player of state.players) {
+        player.folded = true;
+      }
+    }
 
     return state;
   },

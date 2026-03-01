@@ -41,12 +41,12 @@ export function useRoom() {
   );
 
   const joinRoom = useCallback(
-    (roomCode: string, name: string, reconnectToken?: string) =>
+    (roomCode: string, name: string, reconnectToken?: string, persistentId?: string) =>
       new Promise<{ success: boolean; playerId?: string; reconnectToken?: string; error?: string }>(
         (resolve) => {
           socket.emit(
             'room:join',
-            { roomCode, playerName: name, reconnectToken },
+            { roomCode, playerName: name, reconnectToken, persistentId },
             (response) => {
               if (response.success) {
                 resolve({

@@ -23,7 +23,7 @@ export function setupSocketHandler(io: TypedServer): void {
 
     socket.on('room:join', (data, callback) => {
       console.log(`[room:join] code=${data.roomCode} name=${data.playerName} socketId=${socket.id}`);
-      const result = roomManager.joinRoom(data.roomCode, data.playerName, socket, data.reconnectToken);
+      const result = roomManager.joinRoom(data.roomCode, data.playerName, socket, data.reconnectToken, data.persistentId);
       console.log(`[room:join] result=`, JSON.stringify(result));
       callback(result);
     });

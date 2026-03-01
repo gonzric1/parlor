@@ -8,6 +8,8 @@ import { staticMiddleware } from './middleware/static.js';
 import { registerGame } from './platform/game-registry.js';
 import { setupSocketHandler } from './platform/socket-handler.js';
 import { pokerPlugin } from './games/poker/index.js';
+import { initDatabase } from './platform/database.js';
+import { createScoresRouter } from './platform/scores-api.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -19,7 +21,10 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   },
 });
 
+initDatabase();
+
 app.use(corsMiddleware);
+app.use(createScoresRouter());
 
 const staticHandlers = staticMiddleware();
 if (staticHandlers) {

@@ -2,6 +2,7 @@ import { useRef, useCallback, useEffect } from 'react';
 import { AnimatePresence, LayoutGroup } from 'framer-motion';
 import type { GameViewProps } from '../registry';
 import type { PokerPublicState } from './types';
+import { QRCode } from '../../components/QRCode';
 import { ChipStack } from './components/ChipStack';
 import { AnimatedCommunityCards } from './components/AnimatedCommunityCards';
 import { AnimatedPlayerSeat } from './components/AnimatedPlayerSeat';
@@ -99,7 +100,7 @@ const seatPositions = [
   { bottom: '-20px', right: '5%' },
 ];
 
-export function TVView({ publicState }: GameViewProps) {
+export function TVView({ publicState, roomCode }: GameViewProps) {
   const state = publicState as PokerPublicState | null;
   const animations = usePokerAnimations(state);
   const { dealtPlayerIds } = useDealAnimation(state);
@@ -150,15 +151,19 @@ export function TVView({ publicState }: GameViewProps) {
 
   const activePlayer = state.players.find(p => p.id === state.activePlayerId);
   const isShowdown = state.phase === 'showdown' || state.phase === 'winner-decide';
+  const activePlayers = state.players.filter(p => !p.sittingOut && !p.waitingForBB);
+  const waitingForPlayers = activePlayers.length < 2;
 
   return (
     <div ref={containerRef} style={styles.container}>
-      <div style={styles.header}>
-        <span style={styles.phase} data-testid="phase-indicator">{state.phase}</span>
-      </div>
+      {!waitingForPlayers && (
+        <div style={styles.header}>
+          <span style={styles.phase} data-testid="phase-indicator">{state.phase}</span>
+        </div>
+      )}
 
       {/* Turn indicator */}
-      {activePlayer && !isShowdown && (
+      {activePlayer && !isShowdown && !waitingForPlayers && (
         <div style={styles.turnIndicator}>
           {activePlayer.name}'s turn
         </div>
@@ -172,9 +177,21 @@ export function TVView({ publicState }: GameViewProps) {
 
             {/* Pot */}
             <div style={styles.potArea}>
-              <div ref={potRef} style={styles.pot} data-testid="pot-area">
-                <ChipStack amount={animatedPot} />
-              </div>
+              {waitingForPlayers ? (
+                <div style={{
+                  fontSize: '1.6rem',
+                  color: '#aaa',
+                  fontWeight: 600,
+                  textAlign: 'center' as const,
+                  letterSpacing: '0.05em',
+                }}>
+                  Waiting for players...
+                </div>
+              ) : (
+                <div ref={potRef} style={styles.pot} data-testid="pot-area">
+                  <ChipStack amount={animatedPot} />
+                </div>
+              )}
             </div>
 
             {/* Player seats */}
@@ -210,6 +227,26 @@ export function TVView({ publicState }: GameViewProps) {
           )}
         </AnimatePresence>
       </div>
+
+      {/* Join QR code */}
+      {roomCode && (
+        <div style={{
+          position: 'absolute',
+          bottom: 16,
+          right: 16,
+          display: 'flex',
+          flexDirection: 'column' as const,
+          alignItems: 'center',
+          gap: 4,
+          opacity: 0.8,
+          zIndex: 10,
+        }}>
+          <QRCode value={`${window.location.origin}/?room=${roomCode}`} size={80} />
+          <span style={{ color: '#888', fontSize: '0.7rem', letterSpacing: '0.05em' }}>
+            Join: {roomCode}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

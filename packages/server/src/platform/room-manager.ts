@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { getGame, getAllGames } from './game-registry.js';
 import * as lobby from './lobby.js';
 import { getLobbyState } from './lobby.js';
+import { upsertPlayer, recordGameResult } from './database.js';
 import crypto from 'node:crypto';
 
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -20,6 +21,9 @@ interface RoomState {
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   hostTransferTimer: ReturnType<typeof setTimeout> | null;
   gameTimer: ReturnType<typeof setTimeout> | null;
+  persistentIdMap: Map<PlayerId, string>;
+  chipsAtJoin: Map<PlayerId, number>;
+  handsAtStart: number;
 }
 
 const rooms = new Map<RoomCode, RoomState>();
@@ -58,6 +62,9 @@ export function createRoom(tvSocketId?: string): RoomCode {
     cleanupTimer: null,
     hostTransferTimer: null,
     gameTimer: null,
+    persistentIdMap: new Map(),
+    chipsAtJoin: new Map(),
+    handsAtStart: 0,
   };
   rooms.set(code, roomState);
   if (tvSocketId) {
@@ -78,6 +85,7 @@ export function joinRoom(
   playerName: string,
   socket: TypedSocket,
   reconnectToken?: ReconnectToken,
+  persistentId?: string,
 ): { success: true; playerId: PlayerId; reconnectToken: ReconnectToken } | { success: false; error: string } {
   const state = rooms.get(roomCode);
   if (!state) return { success: false, error: 'Room not found' };
@@ -114,6 +122,12 @@ export function joinRoom(
   const playerId = generateId();
   const token = crypto.randomUUID() as ReconnectToken;
 
+  // Track persistent identity
+  if (persistentId) {
+    state.persistentIdMap.set(playerId, persistentId);
+    upsertPlayer(persistentId, playerName);
+  }
+
   // Allow joining during playing phase if plugin supports it
   if (state.room.phase === 'playing') {
     if (!state.gamePlugin || !('onPlayerJoin' in state.gamePlugin) || !state.gamePlugin.onPlayerJoin) {
@@ -140,6 +154,12 @@ export function joinRoom(
     io.to(roomCode).emit('game:start', { gameId: state.gamePlugin.meta.id });
     distributeGameState(state);
     broadcastLobby(state);
+
+    // If stuck in showdown waiting for players, try starting next round
+    if (state.gamePlugin.getPhase(state.gameState) === 'showdown') {
+      handleRoundEnd(roomCode, state);
+    }
+
     return { success: true, playerId, reconnectToken: token };
   }
 
@@ -168,6 +188,33 @@ export function joinRoom(
   return { success: true, playerId, reconnectToken: token };
 }
 
+function recordPlayerResult(state: RoomState, playerId: PlayerId, placement: number): void {
+  const persistentId = state.persistentIdMap.get(playerId);
+  if (!persistentId) return;
+  if (!state.gamePlugin || !state.gameState) return;
+
+  const gs = state.gameState as any;
+  const player = gs.players?.find((p: any) => p.id === playerId);
+  if (!player) return;
+
+  const chipsStart = state.chipsAtJoin.get(playerId) ?? player.chips;
+  const chipsEnd = player.chips;
+  const handsPlayed = (gs.handNumber ?? 0) - state.handsAtStart;
+
+  // Skip recording if nothing happened
+  if (handsPlayed === 0 && chipsEnd === chipsStart) return;
+
+  recordGameResult({
+    persistentId,
+    gameId: state.gamePlugin.meta.id,
+    roomCode: state.room.code,
+    placement,
+    chipsStart,
+    chipsEnd,
+    handsPlayed,
+  });
+}
+
 export function leaveRoom(socketId: string): void {
   const mapping = socketToPlayer.get(socketId);
   if (!mapping) return;
@@ -194,6 +241,11 @@ export function leaveRoom(socketId: string): void {
       state.gameState = state.gamePlugin.onPlayerLeave(state.gameState, mapping.playerId);
       distributeGameState(state);
     }
+  }
+
+  // Record stats before removing player
+  if (state.room.phase === 'playing') {
+    recordPlayerResult(state, mapping.playerId, state.room.players.length);
   }
 
   socketToPlayer.delete(socketId);
@@ -314,6 +366,15 @@ export function startGame(roomCode: RoomCode, playerId: PlayerId): void {
   const playerNames: Record<string, string> = {};
   connectedPlayers.forEach(p => { playerNames[p.id] = p.name; });
   state.gameState = plugin.initialize(playerIds, { ...state.room.gameSettings, playerNames });
+  state.handsAtStart = 0;
+
+  // Capture starting chips for all players
+  const gs = state.gameState as any;
+  if (gs?.players) {
+    for (const p of gs.players) {
+      state.chipsAtJoin.set(p.id, p.chips);
+    }
+  }
 
   io.to(roomCode).emit('game:start', { gameId: plugin.meta.id });
   distributeGameState(state);
@@ -408,6 +469,18 @@ export function returnToLobby(roomCode: RoomCode, playerId: PlayerId): void {
   if (!state) return;
   if (state.room.hostId !== playerId) return;
 
+  // Record results for all players, ranked by chips (descending)
+  if (state.gamePlugin && state.gameState) {
+    const gs = state.gameState as any;
+    if (gs.players) {
+      const sorted = [...gs.players].sort((a: any, b: any) => b.chips - a.chips);
+      sorted.forEach((p: any, i: number) => {
+        recordPlayerResult(state, p.id, i + 1);
+      });
+    }
+    state.chipsAtJoin.clear();
+  }
+
   state.room = lobby.returnToLobby(state.room);
   state.gameState = null;
   state.gamePlugin = null;
@@ -448,6 +521,17 @@ function startCleanupTimer(roomCode: RoomCode): void {
 function destroyRoom(roomCode: RoomCode): void {
   const state = rooms.get(roomCode);
   if (!state) return;
+
+  // Record results for any players still tracked
+  if (state.gamePlugin && state.gameState) {
+    const gs = state.gameState as any;
+    if (gs.players) {
+      const sorted = [...gs.players].sort((a: any, b: any) => b.chips - a.chips);
+      sorted.forEach((p: any, i: number) => {
+        recordPlayerResult(state, p.id, i + 1);
+      });
+    }
+  }
 
   if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
   if (state.hostTransferTimer) clearTimeout(state.hostTransferTimer);

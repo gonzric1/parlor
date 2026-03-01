@@ -8,7 +8,7 @@ export const pokerPlugin: ClientGamePlugin = {
     id: 'poker',
     name: "Texas Hold'em",
     description: 'Classic poker',
-    minPlayers: 2,
+    minPlayers: 1,
     maxPlayers: 8,
   } as GameMeta,
   TVView,

@@ -8,7 +8,7 @@ export interface ClientToServerEvents {
   ) => void;
 
   'room:join': (
-    data: { roomCode: RoomCode; playerName: string; reconnectToken?: ReconnectToken },
+    data: { roomCode: RoomCode; playerName: string; reconnectToken?: ReconnectToken; persistentId?: string },
     callback: (response:
       | { success: true; playerId: PlayerId; reconnectToken: ReconnectToken }
       | { success: false; error: string }
