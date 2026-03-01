@@ -1,6 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import type {
-  PlayerId, RoomCode, ReconnectToken, Room, Player,
+  PlayerId, RoomCode, ReconnectToken, GameId, Room, Player,
   ServerGamePlugin, GameAction, ClientToServerEvents, ServerToClientEvents,
 } from '@parlor/shared';
 import { generateRoomCode } from '@parlor/shared';
@@ -86,7 +86,7 @@ export function joinRoom(
   socket: TypedSocket,
   reconnectToken?: ReconnectToken,
   persistentId?: string,
-): { success: true; playerId: PlayerId; reconnectToken: ReconnectToken } | { success: false; error: string } {
+): { success: true; playerId: PlayerId; reconnectToken: ReconnectToken; gameId?: GameId } | { success: false; error: string } {
   const state = rooms.get(roomCode);
   if (!state) return { success: false, error: 'Room not found' };
 
@@ -160,7 +160,7 @@ export function joinRoom(
       handleRoundEnd(roomCode, state);
     }
 
-    return { success: true, playerId, reconnectToken: token };
+    return { success: true, playerId, reconnectToken: token, gameId: state.gamePlugin.meta.id };
   }
 
   const isFirst = state.room.players.length === 0;

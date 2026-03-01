@@ -169,7 +169,7 @@ export function JoinPage() {
     const result = await joinRoom(roomCode, name, token, persistentId);
     if (result.success && result.reconnectToken) {
       sessionStorage.setItem(tokenKey, result.reconnectToken);
-      navigate(`/play/${roomCode}`);
+      navigate(`/play/${roomCode}`, { state: { gameId: result.gameId } });
     } else {
       setError(result.error ?? 'Failed to join room');
     }
