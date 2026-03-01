@@ -1,8 +1,19 @@
 services:
   parlor:
     build: .
-    ports:
-      - '3000:3000'
+    container_name: parlor
+    restart: unless-stopped
     environment:
       - NODE_ENV=production
       - PORT=3000
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.parlor.rule=Host(`parlortv.com`) || Host(`www.parlortv.com`)"
+      - "traefik.http.routers.parlor.entrypoints=web"
+      - "traefik.http.services.parlor.loadbalancer.server.port=3000"
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    external: true
