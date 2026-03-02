@@ -50,6 +50,7 @@ export interface PokerState {
   lastAggressor: number | null;
   playersActedThisRound: string[];
   mucked: boolean;
+  allInRunout: boolean;
   minBuyIn: number;
 }
 

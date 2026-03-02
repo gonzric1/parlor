@@ -376,6 +376,7 @@ export function startNewHand(state: PokerState): PokerState {
   newState.communityCards = [];
   newState.pots = [];
   newState.mucked = false;
+  newState.allInRunout = false;
   newState.lastAggressor = null;
   newState.playersActedThisRound = [];
   newState.handNumber += 1;

@@ -92,6 +92,7 @@ export const pokerPlugin: ServerGamePlugin<
       lastAggressor: null,
       playersActedThisRound: [],
       mucked: false,
+      allInRunout: false,
       minBuyIn,
     };
 
@@ -220,6 +221,7 @@ export const pokerPlugin: ServerGamePlugin<
 
   getActivePlayerIds(state: PokerState): PlayerId[] {
     if (state.phase === 'showdown' || state.phase === 'dealing') return [];
+    if (state.allInRunout) return [];
     if (state.phase === 'winner-decide') {
       const player = state.players[state.activePlayerIndex];
       return player ? [player.id] : [];
@@ -239,6 +241,7 @@ export const pokerPlugin: ServerGamePlugin<
 
   getTimerDuration(state: PokerState): number | null {
     if (state.phase === 'showdown' || state.phase === 'dealing') return null;
+    if (state.allInRunout) return null;
     if (state.phase === 'winner-decide') return 5000;
     return 30000;
   },
@@ -249,6 +252,14 @@ export const pokerPlugin: ServerGamePlugin<
       const newState = structuredClone(state);
       newState.mucked = true;
       newState.phase = 'showdown';
+      return newState;
+    }
+    // All-in runout: advance one phase
+    if (state.allInRunout) {
+      let newState = engine.advancePhase(state);
+      if (newState.phase === 'showdown') {
+        newState.allInRunout = false;
+      }
       return newState;
     }
     // Auto-fold on timeout
@@ -278,6 +289,9 @@ export const pokerPlugin: ServerGamePlugin<
   },
 
   getPostActionTimer(state: PokerState): { durationMs: number; phase: PokerPhase } | null {
+    if (state.allInRunout && state.phase !== 'showdown') {
+      return { durationMs: 2000, phase: state.phase };
+    }
     if (state.phase === 'winner-decide') {
       return { durationMs: 5000, phase: 'winner-decide' };
     }

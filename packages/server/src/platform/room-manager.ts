@@ -401,7 +401,12 @@ export function handleGameAction(roomCode: RoomCode, playerId: PlayerId, action:
   state.gameState = state.gamePlugin.applyAction(state.gameState, fullAction);
   distributeGameState(state);
 
-  // Check for plugin-requested timer after action
+  scheduleGameTimer(roomCode, state);
+}
+
+function scheduleGameTimer(roomCode: RoomCode, state: RoomState): void {
+  if (!state.gamePlugin || !state.gameState) return;
+
   const timerConfig = state.gamePlugin.getPostActionTimer?.(state.gameState);
   if (timerConfig) {
     if (state.gameTimer) clearTimeout(state.gameTimer);
@@ -412,10 +417,10 @@ export function handleGameAction(roomCode: RoomCode, playerId: PlayerId, action:
 
       currentState.gameState = currentState.gamePlugin.onTimeout(currentState.gameState);
       distributeGameState(currentState);
-      handleRoundEnd(roomCode, currentState);
+      // Check if another timer is needed (e.g. all-in runout chaining)
+      scheduleGameTimer(roomCode, currentState);
     }, timerConfig.durationMs);
   } else {
-    // Clear any existing timer if no timer requested
     if (state.gameTimer) {
       clearTimeout(state.gameTimer);
       state.gameTimer = null;

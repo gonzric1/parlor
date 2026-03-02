@@ -14,6 +14,8 @@ import {
   isEligibleForHand,
   startNewHand,
 } from '../engine.js';
+import { applyAction } from '../actions.js';
+import { pokerPlugin } from '../index.js';
 
 const defaultPlayerFields = {
   bet: 0,
@@ -54,6 +56,7 @@ function makeState(overrides: Partial<PokerState> = {}): PokerState {
     lastAggressor: null,
     playersActedThisRound: [],
     mucked: false,
+    allInRunout: false,
     minBuyIn: 400,
     ...overrides,
   };
@@ -518,5 +521,116 @@ describe('startNewHand', () => {
     expect(result.players[1].holeCards).toHaveLength(2);
     expect(result.players[1].postingBlinds).toBe(false);
     expect(result.players[1].missedBlinds).toBe(0);
+  });
+});
+
+describe('all-in runout', () => {
+  it('advances only one phase and sets allInRunout when all-in pre-flop', () => {
+    // Set up a pre-flop state where both players have acted and one goes all-in
+    const state = makeState({
+      phase: 'pre-flop',
+      players: [
+        makePlayer({ id: 'p1', name: 'P1', chips: 0, bet: 1000, totalBet: 1000, allIn: true,
+          holeCards: [{ rank: 'A', suit: 's' }, { rank: 'K', suit: 's' }] }),
+        makePlayer({ id: 'p2', name: 'P2', chips: 980, bet: 20, totalBet: 20,
+          holeCards: [{ rank: 'Q', suit: 'h' }, { rank: 'J', suit: 'h' }] }),
+      ],
+      dealerIndex: 0,
+      activePlayerIndex: 1,
+      playersActedThisRound: ['p1'],
+    });
+
+    // p2 calls all-in
+    const result = applyAction(state, { playerId: 'p2', type: 'all-in', payload: {} });
+
+    expect(result.allInRunout).toBe(true);
+    expect(result.phase).toBe('flop');
+    expect(result.communityCards).toHaveLength(3);
+  });
+
+  it('onTimeout during runout advances to next phase', () => {
+    const state = makeState({
+      phase: 'flop',
+      allInRunout: true,
+      communityCards: [
+        { rank: '2', suit: 'h' }, { rank: '3', suit: 'd' }, { rank: '7', suit: 'c' },
+      ] as Card[],
+      players: [
+        makePlayer({ id: 'p1', name: 'P1', chips: 0, allIn: true, totalBet: 1000,
+          holeCards: [{ rank: 'A', suit: 's' }, { rank: 'K', suit: 's' }] }),
+        makePlayer({ id: 'p2', name: 'P2', chips: 0, allIn: true, totalBet: 1000,
+          holeCards: [{ rank: 'Q', suit: 'h' }, { rank: 'J', suit: 'h' }] }),
+      ],
+      pots: [{ amount: 2000, eligible: ['p1', 'p2'] }],
+    });
+
+    const result = pokerPlugin.onTimeout(state);
+    expect(result.phase).toBe('turn');
+    expect(result.communityCards).toHaveLength(4);
+    expect(result.allInRunout).toBe(true);
+  });
+
+  it('clears allInRunout when reaching showdown', () => {
+    const state = makeState({
+      phase: 'river',
+      allInRunout: true,
+      communityCards: [
+        { rank: '2', suit: 'h' }, { rank: '3', suit: 'd' }, { rank: '7', suit: 'c' },
+        { rank: '9', suit: 's' }, { rank: 'J', suit: 'h' },
+      ] as Card[],
+      players: [
+        makePlayer({ id: 'p1', name: 'P1', chips: 0, allIn: true, totalBet: 1000,
+          holeCards: [{ rank: 'A', suit: 's' }, { rank: 'K', suit: 's' }] }),
+        makePlayer({ id: 'p2', name: 'P2', chips: 0, allIn: true, totalBet: 1000,
+          holeCards: [{ rank: 'Q', suit: 'h' }, { rank: 'J', suit: 'd' }] }),
+      ],
+      pots: [{ amount: 2000, eligible: ['p1', 'p2'] }],
+    });
+
+    const result = pokerPlugin.onTimeout(state);
+    expect(result.phase).toBe('showdown');
+    expect(result.allInRunout).toBe(false);
+  });
+
+  it('getPostActionTimer returns 2s during runout', () => {
+    const state = makeState({ phase: 'flop', allInRunout: true });
+    const timer = pokerPlugin.getPostActionTimer!(state);
+    expect(timer).toEqual({ durationMs: 2000, phase: 'flop' });
+  });
+
+  it('getPostActionTimer returns null at showdown even with runout flag', () => {
+    const state = makeState({ phase: 'showdown', allInRunout: true });
+    const timer = pokerPlugin.getPostActionTimer!(state);
+    expect(timer).toBeNull();
+  });
+
+  it('getActivePlayerIds returns empty during runout', () => {
+    const state = makeState({
+      phase: 'flop',
+      allInRunout: true,
+      players: [
+        makePlayer({ id: 'p1', name: 'P1', chips: 0, allIn: true }),
+        makePlayer({ id: 'p2', name: 'P2', chips: 0, allIn: true }),
+      ],
+    });
+    expect(pokerPlugin.getActivePlayerIds(state)).toEqual([]);
+  });
+
+  it('getTimerDuration returns null during runout', () => {
+    const state = makeState({ phase: 'flop', allInRunout: true });
+    expect(pokerPlugin.getTimerDuration(state)).toBeNull();
+  });
+
+  it('startNewHand resets allInRunout', () => {
+    const state = makeState({
+      phase: 'showdown',
+      allInRunout: true,
+      players: [
+        makePlayer({ id: 'p1', name: 'P1', chips: 500 }),
+        makePlayer({ id: 'p2', name: 'P2', chips: 500 }),
+      ],
+    });
+    const result = startNewHand(state);
+    expect(result.allInRunout).toBe(false);
   });
 });

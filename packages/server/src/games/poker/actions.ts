@@ -210,11 +210,9 @@ export function applyAction(
     // Check if all remaining players are all-in (or only 1 active)
     const activePlayers = newState.players.filter(p => !p.folded && !p.allIn);
     if (activePlayers.length <= 1 && newState.phase !== 'river') {
-      // Run out remaining community cards
-      newState = calculatePots(newState);
-      while (newState.phase !== 'showdown') {
-        newState = advancePhase(newState);
-      }
+      // All-in runout: advance one phase at a time with delays between
+      newState = advancePhase(newState);
+      newState.allInRunout = true;
     } else {
       newState = advancePhase(newState);
     }
