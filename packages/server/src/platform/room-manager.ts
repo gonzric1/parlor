@@ -21,6 +21,7 @@ interface RoomState {
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   hostTransferTimer: ReturnType<typeof setTimeout> | null;
   gameTimer: ReturnType<typeof setTimeout> | null;
+  tvSocketId: string | null;
   persistentIdMap: Map<PlayerId, string>;
   chipsAtJoin: Map<PlayerId, number>;
   handsAtStart: number;
@@ -62,6 +63,7 @@ export function createRoom(tvSocketId?: string): RoomCode {
     cleanupTimer: null,
     hostTransferTimer: null,
     gameTimer: null,
+    tvSocketId: tvSocketId ?? null,
     persistentIdMap: new Map(),
     chipsAtJoin: new Map(),
     handsAtStart: 0,
@@ -290,6 +292,21 @@ export function leaveRoom(socketId: string): void {
 }
 
 export function handleDisconnect(socketId: string): void {
+  // Handle TV socket disconnect
+  const tvRoom = socketToRoom.get(socketId);
+  if (tvRoom) {
+    socketToRoom.delete(socketId);
+    const tvState = rooms.get(tvRoom);
+    if (tvState && tvState.tvSocketId === socketId) {
+      tvState.tvSocketId = null;
+      // If no players connected either, start cleanup
+      const anyPlayerConnected = tvState.room.players.some(p => p.connected);
+      if (!anyPlayerConnected) {
+        startCleanupTimer(tvRoom);
+      }
+    }
+  }
+
   const mapping = socketToPlayer.get(socketId);
   if (!mapping) return;
 
@@ -548,6 +565,13 @@ function destroyRoom(roomCode: RoomCode): void {
     }
   }
 
+  // Clean up TV socket mappings for this room
+  for (const [sid, code] of socketToRoom) {
+    if (code === roomCode) {
+      socketToRoom.delete(sid);
+    }
+  }
+
   rooms.delete(roomCode);
 }
 
@@ -559,11 +583,11 @@ export function getPlayerMapping(socketId: string): { roomCode: RoomCode; player
   const playerMapping = socketToPlayer.get(socketId);
   if (playerMapping) return playerMapping;
 
-  // Check if this is a TV socket — TV acts as host
+  // Only the host TV socket gets host-proxy privileges
   const roomCode = socketToRoom.get(socketId);
   if (roomCode) {
     const state = rooms.get(roomCode);
-    if (state && state.room.hostId) {
+    if (state && state.tvSocketId === socketId && state.room.hostId) {
       return { roomCode, playerId: state.room.hostId };
     }
   }
@@ -575,11 +599,29 @@ export function observeRoom(
   socket: TypedSocket,
 ): { success: true; gameId: string | null } | { success: false; error: string } {
   const state = rooms.get(roomCode);
-  if (!state) return { success: false, error: 'Room not found' };
+  if (!state) return { success: false, error: 'room_not_found' };
+
+  // If no players connected and no TV connected, room is dead
+  const anyPlayerConnected = state.room.players.some(p => p.connected);
+  if (!anyPlayerConnected && !state.tvSocketId) {
+    destroyRoom(roomCode);
+    return { success: false, error: 'room_empty' };
+  }
+
+  // Cancel cleanup timer — a TV reconnecting should prevent room destruction
+  if (state.cleanupTimer) {
+    clearTimeout(state.cleanupTimer);
+    state.cleanupTimer = null;
+  }
 
   // Join the socket room so the TV receives broadcasts
   socket.join(roomCode);
   socketToRoom.set(socket.id, roomCode);
+
+  // If no TV is currently connected, this socket becomes the host TV
+  if (!state.tvSocketId) {
+    state.tvSocketId = socket.id;
+  }
 
   // Send current lobby state
   broadcastLobby(state);
@@ -591,7 +633,8 @@ export function observeRoom(
     return { success: true, gameId: state.gamePlugin.meta.id };
   }
 
-  return { success: true, gameId: state.room.selectedGameId };
+  // No game running — return null so client knows we're in lobby
+  return { success: true, gameId: null };
 }
 
 export function sendLobbyUpdate(roomCode: RoomCode): void {

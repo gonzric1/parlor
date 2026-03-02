@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useEffect, useState, useRef } from 'react';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useSocket } from '../hooks/useSocket';
 import { useGameState } from '../hooks/useGameState';
 import { useRoom } from '../hooks/useRoom';
@@ -12,12 +12,14 @@ interface GamePageProps {
 export function GamePage({ role }: GamePageProps) {
   const { roomCode } = useParams<{ roomCode: string }>();
   const location = useLocation();
-  const { socket } = useSocket();
+  const navigate = useNavigate();
+  const { socket, connected } = useSocket();
   const { publicState, privateState, sendAction } = useGameState();
-  const { lobby, returnToLobby } = useRoom();
+  const { lobby, observeRoom, returnToLobby } = useRoom();
   const [gameId, setGameId] = useState<string | null>(
     (location.state as { gameId?: string } | null)?.gameId ?? null
   );
+  const observeAttempted = useRef(false);
 
   useEffect(() => {
     const handler = (data: { gameId: string }) => {
@@ -34,6 +36,33 @@ export function GamePage({ role }: GamePageProps) {
       setGameId(lobby.selectedGameId);
     }
   }, [lobby, gameId]);
+
+  // TV reconnection: auto-observe when mounting on /tv/:roomCode
+  useEffect(() => {
+    if (role !== 'tv' || !connected || !roomCode || observeAttempted.current) return;
+    // If we already have a gameId from location.state, no need to observe
+    if ((location.state as { gameId?: string } | null)?.gameId) return;
+
+    observeAttempted.current = true;
+    observeRoom(roomCode).then((result) => {
+      if (result.success && result.gameId) {
+        setGameId(result.gameId);
+      } else if (result.success && !result.gameId) {
+        // Room is in lobby, redirect to TV lobby
+        navigate('/tv', { replace: true });
+      } else {
+        // Room not found or empty
+        navigate('/tv', { replace: true });
+      }
+    });
+  }, [role, connected, roomCode, location.state, observeRoom, navigate]);
+
+  // Reset observe flag on socket reconnect so we re-observe
+  useEffect(() => {
+    if (!connected) {
+      observeAttempted.current = false;
+    }
+  }, [connected]);
 
   if (!gameId || !publicState) {
     return (
