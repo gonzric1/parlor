@@ -138,8 +138,11 @@ export const pokerPlugin: ServerGamePlugin<
     } else if (state.phase === 'showdown') {
       const nonFolded = state.players.filter(p => !p.folded && p.holeCards);
 
-      // Fold-win with muck: hide hole cards
-      if (state.mucked && nonFolded.length === 1) {
+      // Single-player waiting state: no showdown overlay needed
+      if (nonFolded.length === 0) {
+        // showdown stays null
+      } else if (state.mucked && nonFolded.length === 1) {
+        // Fold-win with muck: hide hole cards
         const winner = nonFolded[0];
         showdown = {
           playerHands: [],

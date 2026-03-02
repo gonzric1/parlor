@@ -34,6 +34,59 @@ const styles = {
     flex: '1 1 auto',
     alignItems: 'center',
     minHeight: 0,
+    cursor: 'pointer',
+    WebkitTapHighlightColor: 'transparent',
+  },
+  peekHint: {
+    textAlign: 'center' as const,
+    color: '#666',
+    fontSize: 'clamp(0.65rem, 1.8vw, 0.8rem)',
+    padding: '4px 0 0',
+    flexShrink: 0,
+    userSelect: 'none' as const,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+  },
+  alwaysShowToggle: {
+    background: 'none',
+    border: '1px solid #555',
+    borderRadius: '4px',
+    color: '#888',
+    fontSize: 'clamp(0.6rem, 1.6vw, 0.75rem)',
+    padding: '2px 8px',
+    cursor: 'pointer',
+    userSelect: 'none' as const,
+    WebkitTapHighlightColor: 'transparent',
+  },
+  alwaysShowToggleActive: {
+    background: '#0f3460',
+    border: '1px solid #1a4a8a',
+    borderRadius: '4px',
+    color: '#7db3ff',
+    fontSize: 'clamp(0.6rem, 1.6vw, 0.75rem)',
+    padding: '2px 8px',
+    cursor: 'pointer',
+    userSelect: 'none' as const,
+    WebkitTapHighlightColor: 'transparent',
+  },
+  flipCard: {
+    perspective: '600px',
+  },
+  flipInner: {
+    position: 'relative' as const,
+    transformStyle: 'preserve-3d' as const,
+  },
+  flipFace: {
+    backfaceVisibility: 'hidden' as const,
+  },
+  flipBack: {
+    backfaceVisibility: 'hidden' as const,
+    position: 'absolute' as const,
+    top: 0,
+    left: 0,
+    transform: 'rotateY(180deg)',
   },
   communityCards: {
     display: 'flex',
@@ -85,6 +138,10 @@ export function PlayerView({ publicState, privateState, sendAction }: GameViewPr
   // Track deal animation timing for delayed card reveal
   const [revealedHoleCards, setRevealedHoleCards] = useState<CardData[] | null>(null);
   const [showFaceDown, setShowFaceDown] = useState(false);
+  const [cardsRevealed, setCardsRevealed] = useState(false);
+  const [alwaysShow, setAlwaysShow] = useState(() => {
+    try { return localStorage.getItem('parlor-always-show-cards') === '1'; } catch { return false; }
+  });
   const prevHandNumberRef = useRef<number | null>(null);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -99,6 +156,7 @@ export function PlayerView({ publicState, privateState, sendAction }: GameViewPr
       prevHandNumberRef.current = handNumber;
       setRevealedHoleCards(priv.holeCards);
       setShowFaceDown(false);
+      setCardsRevealed(false);
       return;
     }
 
@@ -118,6 +176,7 @@ export function PlayerView({ publicState, privateState, sendAction }: GameViewPr
 
     setRevealedHoleCards(null);
     setShowFaceDown(false);
+    setCardsRevealed(false);
 
     const dealOrder = computeDealOrder(pub.players, pub.dealerIndex);
     const myIndex = dealOrder.indexOf(priv.playerId);
@@ -131,7 +190,7 @@ export function PlayerView({ publicState, privateState, sendAction }: GameViewPr
     }, myDealDelay);
     newTimers.push(faceDownTimer);
 
-    // Reveal face-up cards after the card fly animation completes
+    // Cards are available after fly animation but stay face-down until player taps
     const revealTimer = setTimeout(() => {
       setRevealedHoleCards(priv.holeCards);
       setShowFaceDown(false);
@@ -144,6 +203,29 @@ export function PlayerView({ publicState, privateState, sendAction }: GameViewPr
       for (const t of newTimers) clearTimeout(t);
     };
   }, [pub?.handNumber, pub?.players, pub?.dealerIndex, priv?.playerId, priv?.holeCards]);
+
+  const togglePeek = useCallback(() => {
+    if (revealedHoleCards) {
+      setCardsRevealed((prev) => !prev);
+    }
+  }, [revealedHoleCards]);
+
+  const toggleAlwaysShow = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setAlwaysShow((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('parlor-always-show-cards', next ? '1' : '0'); } catch {}
+      if (next) setCardsRevealed(true);
+      return next;
+    });
+  }, []);
+
+  // Auto-reveal when alwaysShow is on and new cards arrive
+  useEffect(() => {
+    if (alwaysShow && revealedHoleCards) {
+      setCardsRevealed(true);
+    }
+  }, [alwaysShow, revealedHoleCards]);
 
   if (!pub) {
     return (
@@ -201,22 +283,24 @@ export function PlayerView({ publicState, privateState, sendAction }: GameViewPr
     <div style={styles.container}>
       <div style={styles.section}>
         <div style={styles.phase}>{pub.phase}</div>
-        <div style={styles.holeCards}>
+        <div style={styles.holeCards} onClick={togglePeek}>
           {revealedHoleCards ? (
             revealedHoleCards.map((card, i) => (
-              <motion.div
-                key={`hole-${i}-${card.rank}-${card.suit}`}
-                initial={{ opacity: 0, y: -80 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{
-                  type: 'spring',
-                  stiffness: 300,
-                  damping: 24,
-                  delay: i * 0.15,
-                }}
-              >
-                <Card rank={card.rank} suit={card.suit} size="large" />
-              </motion.div>
+              <div key={`hole-${i}-${card.rank}-${card.suit}`} style={styles.flipCard}>
+                <motion.div
+                  style={styles.flipInner}
+                  initial={{ rotateY: 180 }}
+                  animate={{ rotateY: cardsRevealed ? 0 : 180 }}
+                  transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+                >
+                  <div style={styles.flipFace}>
+                    <Card rank={card.rank} suit={card.suit} size="large" />
+                  </div>
+                  <div style={styles.flipBack}>
+                    <Card faceDown size="large" />
+                  </div>
+                </motion.div>
+              </div>
             ))
           ) : showFaceDown ? (
             <>
@@ -237,6 +321,17 @@ export function PlayerView({ publicState, privateState, sendAction }: GameViewPr
             </>
           ) : null}
         </div>
+        {revealedHoleCards && (
+          <div style={styles.peekHint}>
+            {!cardsRevealed && <span>Tap to peek</span>}
+            <button
+              onClick={toggleAlwaysShow}
+              style={alwaysShow ? styles.alwaysShowToggleActive : styles.alwaysShowToggle}
+            >
+              {alwaysShow ? 'Always Show: ON' : 'Always Show'}
+            </button>
+          </div>
+        )}
         <div style={styles.communityCards}>
           {pub.communityCards.map((card, i) => (
             <Card key={i} rank={card.rank} suit={card.suit} size="small" />
