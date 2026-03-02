@@ -82,6 +82,9 @@ export function calculatePots(state: PokerState): PokerState {
 export function advancePhase(state: PokerState): PokerState {
   let newState = structuredClone(state);
 
+  // Collect current round bets into pots before resetting
+  newState = calculatePots(newState);
+
   // Reset per-round betting state
   for (const player of newState.players) {
     player.bet = 0;
@@ -112,7 +115,6 @@ export function advancePhase(state: PokerState): PokerState {
       break;
     case 'river':
       newState.phase = 'showdown';
-      newState = calculatePots(newState);
       newState = evaluateShowdown(newState);
       break;
   }
