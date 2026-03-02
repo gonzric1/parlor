@@ -22,6 +22,8 @@ function getSocket(): TypedSocket {
     // hasn't mounted yet (e.g. during SPA navigation after game:start)
     socket.on('game:publicState', (state: unknown) => { gameStateCache.publicState = state; });
     socket.on('game:privateState', (state: unknown) => { gameStateCache.privateState = state; });
+    // Clear stale cache on disconnect so reconnections start fresh
+    socket.on('disconnect', () => { gameStateCache.publicState = null; gameStateCache.privateState = null; });
   }
   return socket;
 }

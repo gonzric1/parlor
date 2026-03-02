@@ -115,7 +115,8 @@ export function joinRoom(
 
         broadcastLobby(state);
         io.to(roomCode).emit('room:playerConnectionChange', { playerId: player.id, connected: true });
-        return { success: true, playerId: player.id, reconnectToken };
+        const gameId = state.gamePlugin ? state.gamePlugin.meta.id : undefined;
+        return { success: true, playerId: player.id, reconnectToken, gameId };
       }
     }
   }
